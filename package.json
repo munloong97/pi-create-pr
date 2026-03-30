@@ -1,0 +1,12 @@
+{
+  "name": "pi-create-pr-ext",
+  "version": "1.0.0",
+  "description": "Adds /create-pr command to create a GitHub PR with AI-generated description",
+  "main": "create-pr.ts",
+  "keywords": ["pi", "extension", "git", "github", "pull-request", "command"],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
