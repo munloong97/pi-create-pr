@@ -5,21 +5,24 @@ A pi extension that adds a `/create-pr` command to create GitHub pull requests w
 ## Usage
 
 ```
-/create-pr              # Create PR against default base (main/master)
-/create-pr develop      # Create PR against 'develop' branch
-/create-pr --draft      # Create a draft PR
-/create-pr main --draft # Create a draft PR against 'main'
+/create-pr                    # Create PR against default base (auto-detects: main/master/develop/dev)
+/create-pr develop            # Create PR against 'develop' branch
+/create-pr --draft            # Create a draft PR
+/create-pr main --draft       # Create a draft PR against 'main'
 ```
 
 ## What it does
 
-1. Detects your current branch and base branch
-2. Checks for commits ahead of base
-3. Warns about uncommitted changes
-4. Pushes the branch to origin
-5. Gathers commit log and diff stats
-6. Asks the LLM to generate a PR title + description
-7. Creates the PR via `gh pr create`
+1. ✅ Verifies GitHub CLI (`gh`) is installed and available
+2. ✅ Detects your current branch and auto-detects base branch (main → master → develop → dev)
+3. ✅ Checks for commits ahead of base
+4. ✅ Prevents duplicate PRs (warns if PR already exists for this branch)
+5. ✅ Warns about uncommitted changes
+6. ✅ Warns if branch is behind base (optional rebase prompt)
+7. ✅ Pushes the branch to origin
+8. ✅ Gathers commit log and diff stats
+9. ✅ Generates PR title + description using AI (via `ctx.llm`)
+10. ✅ Creates the PR directly via `gh pr create`
 
 ## Requirements
 
