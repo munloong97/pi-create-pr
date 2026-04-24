@@ -123,29 +123,31 @@ export default function (pi: ExtensionAPI) {
         .replace(/[-_]/g, " ")
         .replace(/\b\w/g, (c) => c.toUpperCase());
 
-      // 12. Generate description using LLM
-      let description: string;
-      try {
-        const llmResponse = await ctx.llm.complete(
-          `Write a concise GitHub PR description in markdown format.
+      // 12. Generate PR description
+      ctx.ui.setStatus("create-pr", "Generating PR description...");
+      
+      // Format commits as bullet points
+      const commitBullets = commitMessages
+        .split('\n')
+        .filter(c => c.trim())
+        .map(c => `- ${c}`)
+        .join('\n');
+      
+      // Build a clean description
+      const description = `## Summary
 
-**Title:** ${prTitle}
-**Branch:** ${currentBranch}
-**Base:** ${base}
+${prTitle}
 
-**Commits:**
-${commitMessages}
+## Changes
 
-**Changes:**
+${commitBullets}
+
+## Files Changed
+
+\`\`\`
 ${diffStat}
-
-Write a brief summary (1-2 sentences), then list the key changes in bullet points.`
-        );
-        description = llmResponse.trim();
-      } catch {
-        // Fallback to simple description
-        description = `## Summary\n\nPR for ${currentBranch}\n\n## Changes\n\n${commitMessages.split('\n').map(c => `- ${c}`).join('\n')}`;
-      }
+\`\`\`
+`;
 
       // 13. Create PR directly using gh CLI
       ctx.ui.setStatus("create-pr", "Creating PR...");
