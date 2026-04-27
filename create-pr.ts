@@ -6,9 +6,9 @@
  *
  * Usage:
  * - `/create-pr`              - create PR against default base branch (main/master/develop/dev)
- * - `/create-pr <base>`       - create PR against a specific base branch
+ * - `/create-pr --open`       - open PR creation in browser for manual editing
  * - `/create-pr --draft`      - create a draft PR
- * - `/create-pr <base> --draft` - create a draft PR against a specific base
+ * - `/create-pr --draft --open` - create a draft PR and open in browser
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
@@ -17,14 +17,17 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("create-pr", {
     description: "Create a GitHub PR with AI-generated description",
     getArgumentCompletions: (prefix) => {
-      const options = ["--draft", "main", "master", "develop", "dev", "staging"];
+      const options = ["--draft", "--open", "main", "master", "develop", "dev", "staging"];
       const filtered = options.filter((o) => o.startsWith(prefix));
       return filtered.length > 0 ? filtered.map((o) => ({ value: o, label: o })) : null;
     },
     handler: async (args: string | undefined, ctx: ExtensionCommandContext) => {
       const tokens = (args?.trim() ?? "").split(/\s+/).filter(Boolean);
       const isDraft = tokens.includes("--draft");
-      const baseBranch = tokens.find((t) => t !== "--draft") ?? "";
+      const isOpen = tokens.includes("--open");
+      
+      // Get base branch from non-flag tokens
+      const baseBranch = tokens.find((t) => t !== "--draft" && t !== "--open") ?? "";
 
       // 1. Check we're in a git repo
       const gitCheck = await pi.exec("git", ["rev-parse", "--is-inside-work-tree"]);
@@ -108,63 +111,116 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // 10. Get diff + commit log for description generation
-      ctx.ui.setStatus("create-pr", "Generating PR description...");
-
-      const diffResult = await pi.exec("git", ["diff", `${base}...${currentBranch}`, "--stat"]);
-      const commitLog = await pi.exec("git", ["log", `${base}..${currentBranch}`, "--pretty=format:%s"]);
-
-      const diffStat = diffResult.stdout.trim();
-      const commitMessages = commitLog.stdout.trim();
-
-      // 11. Derive PR title from branch name
+      // 10. Derive PR title from branch name
       const prTitle = currentBranch
         .replace(/^(feature|fix|chore|docs|refactor|hotfix)\//i, "")
         .replace(/[-_]/g, " ")
         .replace(/\b\w/g, (c) => c.toUpperCase());
 
-      // 12. Generate PR description
-      ctx.ui.setStatus("create-pr", "Generating PR description...");
+      // 11. Generate PR description using LLM
+      ctx.ui.setStatus("create-pr", "Generating PR description with AI...");
       
-      // Format commits as bullet points
-      const commitBullets = commitMessages
-        .split('\n')
-        .filter(c => c.trim())
-        .map(c => `- ${c}`)
-        .join('\n');
+      // Get detailed commit log with full messages
+      const commitLogResult = await pi.exec("git", [
+        "log", 
+        `${base}..${currentBranch}`, 
+        "--pretty=format:%h %s%n%b%n---"
+      ]);
       
-      // Build a clean description
-      const description = `## Summary
+      // Get full diff (truncated if too large)
+      const diffResult = await pi.exec("git", [
+        "diff", 
+        `${base}...${currentBranch}`,
+        "--stat"
+      ]);
+      
+      const fileChanges = diffResult.stdout.trim();
+      const commitMessages = commitLogResult.stdout.trim();
 
-${prTitle}
+      // Create a prompt for the LLM
+      const prompt = `## Generating a Pull Request Description
 
-## Changes
+Please analyze the following commit history and file changes to generate a comprehensive, professional Pull Request description.
 
-${commitBullets}
+### Branch Information
+- **Current Branch:** ${currentBranch}
+- **Base Branch:** ${base}
+- **Derived Title:** ${prTitle}
 
-## Files Changed
-
+### Commit History
 \`\`\`
-${diffStat}
+${commitMessages}
 \`\`\`
-`;
 
-      // 13. Create PR directly using gh CLI
+### Files Changed
+\`\`\`
+${fileChanges}
+\`\`\`
+
+Please generate a Pull Request description that includes:
+1. A clear summary of what this PR does (2-3 sentences)
+2. Key changes made (as bullet points)
+3. Any important notes or considerations for reviewers
+
+Format it in Markdown with proper headers and bullet points. Be concise but informative. Only return the PR description text, nothing else.`;
+
+      // Send to LLM and wait for response
+      let prDescription = "";
+      try {
+        pi.sendUserMessage(prompt);
+        
+        // Wait for the LLM to finish
+        await ctx.waitForIdle();
+        
+        // Get the last assistant message (the generated description)
+        const entries = ctx.sessionManager.getBranch();
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entry = entries[i];
+          if (entry.type === "message" && entry.message.role === "assistant") {
+            const content = entry.message.content;
+            if (Array.isArray(content)) {
+              prDescription = content
+                .filter((c: any) => c.type === "text")
+                .map((c: any) => c.text)
+                .join("");
+            } else if (typeof content === "string") {
+              prDescription = content;
+            }
+            break;
+          }
+        }
+        
+        if (!prDescription.trim()) {
+          throw new Error("No description generated");
+        }
+      } catch (error) {
+        ctx.ui.setStatus("create-pr", "");
+        ctx.ui.notify(`Failed to generate PR description: ${error}`, "error");
+        return;
+      }
+
+      // 12. Create PR
       ctx.ui.setStatus("create-pr", "Creating PR...");
+      
       const prArgs = [
         "pr", "create",
         "--base", base,
         "--title", prTitle,
-        "--body", description,
-        ...(isDraft ? ["--draft"] : [])
+        "--body", prDescription,
+        ...(isDraft ? ["--draft"] : []),
+        ...(isOpen ? ["--web"] : [])
       ];
 
       const prResult = await pi.exec("gh", prArgs);
       ctx.ui.setStatus("create-pr", "");
 
       if (prResult.code === 0) {
-        const urlMatch = prResult.stdout.match(/https:\/\/github\.com\/[^\s]+/);
-        ctx.ui.notify(urlMatch ? `✅ PR created: ${urlMatch[0]}` : "✅ PR created successfully!", "success");
+        if (isOpen) {
+          ctx.ui.notify("✅ PR opened in browser for review", "success");
+        } else {
+          const urlMatch = prResult.stdout.match(/https:\/\/github\.com\/[^\s]+/);
+          ctx.ui.notify(urlMatch ? `✅ PR created: ${urlMatch[0]}` : "✅ PR created successfully!", "success");
+        }
       } else {
         ctx.ui.notify(`Failed to create PR: ${prResult.stderr.trim()}`, "error");
       }
