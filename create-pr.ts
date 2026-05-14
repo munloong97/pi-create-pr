@@ -167,14 +167,19 @@ Format it in Markdown with proper headers and bullet points. Be concise but info
       // Send to LLM and wait for response
       let prDescription = "";
       try {
-        pi.sendUserMessage(prompt);
-        
+        // Snapshot history length BEFORE sending so we only look at new entries.
+        // (Prevents picking up a stale assistant message if waitForIdle returns
+        // before the new prompt has been dequeued.)
+        const startLen = ctx.sessionManager.getBranch().length;
+
+        await pi.sendUserMessage(prompt);
+
         // Wait for the LLM to finish
         await ctx.waitForIdle();
-        
-        // Get the last assistant message (the generated description)
+
+        // Get the last assistant message produced AFTER our prompt
         const entries = ctx.sessionManager.getBranch();
-        for (let i = entries.length - 1; i >= 0; i--) {
+        for (let i = entries.length - 1; i >= startLen; i--) {
           const entry = entries[i];
           if (entry.type === "message" && entry.message.role === "assistant") {
             const content = entry.message.content;
